@@ -31,6 +31,7 @@ ${bold('COMMANDS')}
   review                Report unanswered conversations (default command).
   status                Show what is stored locally and when it was last synced.
   reset                 Delete the local message database (needs --yes).
+  web-versions          List WhatsApp Web page versions that can be pinned.
   logout                Unlink the device and delete the stored session.
 
 ${bold('REVIEW FILTERS')}
@@ -60,6 +61,13 @@ ${bold('OUTPUT')}
   --csv                         Write CSV (stdout unless --out is given).
   --html                        Write an interactive HTML dashboard (report.html).
   --out <path>                  Destination file for the chosen format.
+
+${bold('WHEN WHATSAPP WEB BREAKS THE LIBRARY')}
+  If sync fails inside WhatsApp's own code, pin an older page version:
+    ${CMD} web-versions          see what is available
+    set WASSAP_WEB_VERSION=oldest    (Windows)
+    export WASSAP_WEB_VERSION=oldest (macOS/Linux)
+  Accepts oldest, latest, or an exact version. Unset it to go back to default.
 
 ${bold('RESET OPTIONS')}
   --yes                         Confirm the deletion. Without it, reset only reports.
@@ -104,6 +112,7 @@ const OPTIONS = {
   messages: { type: 'string' },
   'no-groups': { type: 'boolean' },
   yes: { type: 'boolean' },
+  count: { type: 'string' },
   all: { type: 'boolean' },
 };
 
@@ -289,6 +298,34 @@ function cmdStatus() {
   }
 }
 
+async function cmdWebVersions(values) {
+  const { fetchVersions } = await import('../src/webversion.js');
+  const versions = await fetchVersions();
+  const count = integer(values.count, '--count') ?? 15;
+
+  process.stdout.write(
+    `${bold(`${versions.length} archived WhatsApp Web versions`)} ` +
+      dim('(older ones expire and are removed)\n\n')
+  );
+
+  const show = (entry, label) => {
+    const released = entry.released ? entry.released.slice(0, 10) : 'unknown';
+    process.stdout.write(`  ${entry.version.padEnd(26)} ${dim(released)}${label}\n`);
+  };
+
+  show(versions[0], cyan('   <- oldest, try this first'));
+  process.stdout.write(dim(`  ${'...'.padEnd(26)}\n`));
+  for (const entry of versions.slice(-count)) {
+    show(entry, entry === versions[versions.length - 1] ? dim('   <- latest') : '');
+  }
+
+  process.stdout.write(
+    `\n${dim('Pin one with:')}\n` +
+      `  set WASSAP_WEB_VERSION=oldest        ${dim('(or an exact version above)')}\n` +
+      `  ${command('sync', CMD)}\n`
+  );
+}
+
 function cmdReset(values) {
   const store = describeStore();
 
@@ -319,7 +356,9 @@ function cmdReset(values) {
 
 async function main() {
   const argv = process.argv.slice(2);
-  const commands = new Set(['login', 'sync', 'review', 'status', 'reset', 'logout', 'help']);
+  const commands = new Set([
+    'login', 'sync', 'review', 'status', 'reset', 'web-versions', 'logout', 'help',
+  ]);
   const command = commands.has(argv[0]) ? argv.shift() : 'review';
 
   let values;
@@ -343,6 +382,8 @@ async function main() {
       return cmdStatus();
     case 'reset':
       return cmdReset(values);
+    case 'web-versions':
+      return cmdWebVersions(values);
     case 'logout':
       return cmdLogout();
     default:

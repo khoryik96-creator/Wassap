@@ -1,6 +1,8 @@
 import path from 'node:path';
 import { sessionDir, resolveBrowserPath, dataDir } from './config.js';
 import { UserError } from './errors.js';
+import { resolveWebVersion, remotePathFor } from './webversion.js';
+import { command } from './invocation.js';
 import {
   installProtocolErrorGuard,
   beginSession,
@@ -25,21 +27,20 @@ async function loadLibrary() {
   }
 }
 
-export async function createClient() {
+export async function createClient({ onStatus = () => {} } = {}) {
   const { Client, LocalAuth } = await loadLibrary();
   const executablePath = await resolveBrowserPath();
 
   // WhatsApp Web occasionally ships changes that break whatsapp-web.js. Pinning
-  // a known-good page version is the usual mitigation, so allow one to be named.
-  const pinned = process.env.WASSAP_WEB_VERSION;
-  const webVersionCache = pinned
-    ? {
-        type: 'remote',
-        remotePath:
-          'https://raw.githubusercontent.com/wppconnect-team/wa-version/main/html/' +
-          `${pinned}.html`,
-      }
-    : undefined;
+  // an archived page version is the usual mitigation. "oldest" is the closest
+  // archived page to the era the installed library was written against.
+  const pin = process.env.WASSAP_WEB_VERSION;
+  let webVersionCache;
+  if (pin) {
+    const version = await resolveWebVersion(pin);
+    webVersionCache = { type: 'remote', remotePath: remotePathFor(version) };
+    onStatus(`Pinning WhatsApp Web version ${version}`);
+  }
 
   return new Client({
     authStrategy: new LocalAuth({ dataPath: sessionDir() }),
@@ -99,7 +100,7 @@ export async function showQr(qr, attempt, onStatus, write = process.stdout.write
 }
 
 export async function withClient(fn, { onStatus = () => {} } = {}) {
-  const client = await createClient();
+  const client = await createClient({ onStatus });
   let attempt = 0;
   let toldAboutImage = false;
 
@@ -143,15 +144,15 @@ export async function withClient(fn, { onStatus = () => {} } = {}) {
     if (isProtocolNoise(err)) {
       throw new UserError(
         'The browser closed unexpectedly while talking to WhatsApp Web.\n\n' +
-          'This usually means the browser build does not match what\n' +
-          'whatsapp-web.js expects. The most reliable fix is to let Puppeteer\n' +
-          'use its own Chromium:\n' +
+          'Most often the browser build does not match what whatsapp-web.js\n' +
+          'expects. Let Puppeteer use its own Chromium:\n' +
           '  npm install-scripts approve puppeteer\n' +
           '  npm install\n\n' +
-          'If that is already the case, WhatsApp Web may have changed under the\n' +
-          'library. Pin a known-good version and retry:\n' +
-          '  set WASSAP_WEB_VERSION=2.3000.1027183017\n\n' +
-          `Re-run with WASSAP_DEBUG=1 for the underlying error.`
+          'If that is already so, WhatsApp Web has probably changed under the\n' +
+          'library. Pin an older page version and retry:\n' +
+          `  ${command('web-versions')}      list what can be pinned\n` +
+          '  set WASSAP_WEB_VERSION=oldest\n\n' +
+          'Re-run with WASSAP_DEBUG=1 for the underlying error.'
       );
     }
     throw err;

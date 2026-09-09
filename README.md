@@ -70,28 +70,48 @@ on Windows). If your terminal font makes the code hard for the camera to read,
 open that image instead and scan it from the screen. It is rewritten on every
 refresh, so reopen it after each redraw.
 
+### If sync fails inside WhatsApp's own code
+
+An error like `r: r`, or a crash pointing into WhatsApp Web's minified
+JavaScript, means whatsapp-web.js is calling internals that the current
+WhatsApp Web build has changed. The library is only updated when its
+maintainers catch up, so the fix is to load an older page.
+
+The WPPConnect project archives past versions. List what can be pinned:
+
+```bash
+wassap web-versions
+```
+
+Then pin one and retry. `oldest` is the right first attempt, because the
+archived page furthest back is closest to the era the installed library was
+written against:
+
+```bat
+set WASSAP_WEB_VERSION=oldest
+node bin/wassap.js sync
+```
+
+`WASSAP_WEB_VERSION` accepts `oldest`, `latest`, or an exact version string.
+Unset it (`set WASSAP_WEB_VERSION=`) to go back to the default. Note that
+archived versions expire after roughly two months, so the pinnable range is a
+moving window — if the library has fallen a long way behind, no pin may be old
+enough, and the honest answer is that whatsapp-web.js needs an upstream fix.
+
 ### If sync crashes with "Target closed"
 
 whatsapp-web.js re-injects its scripts on page events without awaiting the
 result. When the browser closes, those calls reject with `Target closed`, and
-Node treats an unhandled rejection as fatal. wassap now ignores that specific
-class of error while a browser session is live, so normal teardown cannot kill
-a run; unrelated failures still surface as usual.
+Node treats an unhandled rejection as fatal. wassap ignores that specific class
+of error while a browser session is live, so normal teardown cannot kill a run;
+unrelated failures still surface as usual.
 
-If the browser genuinely dies mid-session, the most reliable fix is to let
-Puppeteer use its own version-matched Chromium rather than a system browser:
+If the browser genuinely dies mid-session, let Puppeteer use its own
+version-matched Chromium rather than a system browser:
 
 ```bat
 npm install-scripts approve puppeteer
 npm install
-```
-
-If that is already the case, WhatsApp Web may have shipped a change the library
-has not caught up with. Pin a known-good page version and retry:
-
-```bat
-set WASSAP_WEB_VERSION=2.3000.1027183017
-node bin/wassap.js sync
 ```
 
 ### About the npm audit warnings
@@ -197,6 +217,7 @@ messages, so they cannot make a dead thread look answered.
 | `review` | Report unanswered conversations (the default command) |
 | `status` | Show what is stored and when it was last synced |
 | `reset` | Delete the local message database (needs `--yes`) |
+| `web-versions` | List WhatsApp Web page versions available to pin |
 | `logout` | Unlink and delete the stored session |
 
 ## Filters
