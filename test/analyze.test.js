@@ -182,3 +182,13 @@ test('formatNumber rejects ids that are not plausible phone numbers', () => {
   assert.equal(formatNumber('12345'), null);
   assert.equal(formatNumber('447700900123@c.us'), '+447700900123');
 });
+
+test('a reaction acknowledges a message without answering it', () => {
+  const t = analyzeChat(directChat, [
+    msg('m1', daysAgo(10), true),
+    msg('m2', daysAgo(2), false, { type: 'reaction', body: '👍' }),
+  ], NOW);
+  assert.equal(t.direction, 'awaiting_them', 'still waiting on a real reply');
+  assert.equal(t.waitingMs, 10 * DAY);
+  assert.equal(t.messageCount, 1);
+});

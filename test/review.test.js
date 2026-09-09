@@ -164,13 +164,16 @@ test('sync refuses to touch a database seeded with demo data', async (t) => {
   });
 });
 
-test('a database without the demo marker is not blocked by that guard', async (t) => {
+test('a database without the demo marker gets past that guard', async (t) => {
   const { db, dir } = tempDb();
   t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
 
-  // No demo marker, so sync gets past the guard and fails later, on the browser.
-  await assert.rejects(() => sync(db), (err) => {
-    assert.ok(!(err instanceof UserError), 'not the demo refusal');
+  // No demo marker, so the guard lets it through and the next step -- choosing
+  // a backend -- is what rejects. Naming a bogus backend keeps this offline.
+  await assert.rejects(() => sync(db, { backend: 'not-a-backend' }), (err) => {
+    assert.ok(err instanceof UserError);
+    assert.match(err.message, /Unknown backend/);
+    assert.ok(!/demo data/.test(err.message), 'it was not stopped by the demo guard');
     return true;
   });
 });

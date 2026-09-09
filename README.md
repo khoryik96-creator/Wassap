@@ -4,8 +4,8 @@ Review the WhatsApp conversations that went unanswered — by date, how long the
 have been waiting, whether the number is saved in your contacts, and whether you
 or the other person owes the reply.
 
-It links to your account the same way WhatsApp Web does (one QR scan), keeps a
-local copy of your chats in SQLite, and reports on them from there.
+It links to your account with one QR scan, keeps a local copy of your chats in
+SQLite, and reports on them from there.
 
 ```
 19 unanswered conversations (of 24 analysed)
@@ -21,11 +21,24 @@ local copy of your chats in SQLite, and reports on them from there.
 
 ## Read this first
 
-This uses [whatsapp-web.js](https://github.com/pedroslopez/whatsapp-web.js),
-which automates a real WhatsApp Web session. It is **not an official WhatsApp
-API**, and automating your account is against WhatsApp's Terms of Service.
-Accounts do occasionally get banned for automation. That risk is small for
-read-only use at this volume, but it is not zero and it is yours to accept.
+This is **not an official WhatsApp API**, and automating your account is against
+WhatsApp's Terms of Service. Accounts do occasionally get banned for automation.
+That risk is small for read-only use at this volume, but it is not zero and it
+is yours to accept.
+
+## How it connects
+
+Two backends, selected with `--backend` or `WASSAP_BACKEND`:
+
+| Backend | How it works | Trade-off |
+| --- | --- | --- |
+| `baileys` (default) | Speaks WhatsApp's multi-device protocol directly over a WebSocket | Does not depend on WhatsApp Web's JavaScript, so it survives changes to it. History is whatever WhatsApp pushes after linking, rather than pulled per chat |
+| `webjs` | Drives WhatsApp Web in a headless browser via whatsapp-web.js | Pulls history per chat on demand, but breaks whenever WhatsApp reshuffles its web bundle ahead of the library |
+
+`webjs` was the original default. It is kept because its per-chat fetching is
+useful when it works, but as of this writing whatsapp-web.js is several months
+behind WhatsApp Web and `getChats` fails inside WhatsApp's own minified code.
+Use `baileys` unless you have reason not to.
 
 Nothing is uploaded anywhere. Your messages, the session, and every report stay
 on your machine.

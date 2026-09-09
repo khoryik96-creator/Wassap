@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { renderQrText, writeQrImage, showQr } from '../src/whatsapp.js';
+import { renderQrText, writeQrImage, showQr } from '../src/qr.js';
 
 const PAYLOAD = '2@ABCdefGHI123456789jklMNOpqrSTUvwxYZ==,xYz9876543210AbCdEf=,LmNoPqRs=,1';
 

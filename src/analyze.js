@@ -27,6 +27,8 @@ export const NON_CONVERSATIONAL_TYPES = new Set([
   'ciphertext',
   'revoked',
   'call_log',
+  // A thumbs-up acknowledges a message; it does not answer it.
+  'reaction',
 ]);
 
 /** Chat ids that are not real conversations (status feed, channels). */

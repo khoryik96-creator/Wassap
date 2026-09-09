@@ -74,8 +74,12 @@ ${bold('RESET OPTIONS')}
   --all                         Also remove the linked session, as logout does.
 
 ${bold('SYNC OPTIONS')}
-  --messages <n>                Messages to fetch per chat. (50)
+  --messages <n>                Messages to fetch per chat. (50, webjs only)
   --no-groups                   Skip group chats while syncing.
+  --backend <baileys|webjs>     How to reach WhatsApp. (baileys)
+                                baileys speaks the protocol directly; webjs
+                                drives WhatsApp Web in a browser and breaks
+                                when WhatsApp changes it.
 
 ${bold('EXAMPLES')}
   ${CMD} login
@@ -111,6 +115,7 @@ const OPTIONS = {
   out: { type: 'string' },
   messages: { type: 'string' },
   'no-groups': { type: 'boolean' },
+  backend: { type: 'string' },
   yes: { type: 'boolean' },
   count: { type: 'string' },
   all: { type: 'boolean' },
@@ -253,26 +258,25 @@ async function cmdSync(values) {
   const result = await sync(db, {
     limit: integer(values.messages, '--messages') ?? 50,
     includeGroups: !values['no-groups'],
+    backend: values.backend,
     onStatus,
   });
   process.stderr.write(
-    `\nSynced ${result.chats} chats. Local store now holds ` +
-      `${result.stored.chats} chats and ${result.stored.messages} messages.\n` +
+    `\nSynced ${result.chats} chats and ${result.messages} messages via ${result.backend}.\n` +
+      `Local store now holds ${result.stored.chats} chats and ${result.stored.messages} messages.\n` +
       dim(`Run \`${command('review', CMD)}\` to see what is unanswered.\n`)
   );
 }
 
-async function cmdLogin() {
-  const { withClient } = await import('../src/whatsapp.js');
+async function cmdLogin(values) {
+  const { loadBackend } = await import('../src/backends/index.js');
+  const { name, login } = await loadBackend(values.backend);
   const onStatus = (m) => process.stderr.write(`${m}\n`);
-  await withClient(
-    async (client) => {
-      const me = client.info?.pushname ?? client.info?.wid?.user ?? 'your account';
-      process.stderr.write(`\nLinked as ${bold(String(me))}.\n`);
-      process.stderr.write(dim(`Next: run \`${command('sync', CMD)}\` to pull your chats.\n`));
-    },
-    { onStatus }
-  );
+
+  onStatus(`Linking via ${name}...`);
+  const { name: who } = await login({ onStatus });
+  process.stderr.write(`\nLinked as ${bold(String(who))}.\n`);
+  process.stderr.write(dim(`Next: run \`${command('sync', CMD)}\` to pull your chats.\n`));
 }
 
 function cmdStatus() {
@@ -375,7 +379,7 @@ async function main() {
 
   switch (command) {
     case 'login':
-      return cmdLogin();
+      return cmdLogin(values);
     case 'sync':
       return cmdSync(values);
     case 'status':
