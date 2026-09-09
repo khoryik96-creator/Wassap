@@ -1,6 +1,12 @@
 node_modules/
 .wassap/
 *.log
-report.html
+
+# Generated output contains real message content from your account.
+# Ignored by default so a report can never be committed by accident.
+*.html
+*.csv
+*.png
 unanswered.json
-unanswered.csv
+wassap.db
+wassap.db-*
