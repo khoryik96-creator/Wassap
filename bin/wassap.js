@@ -470,11 +470,32 @@ function explain(err) {
   return null;
 }
 
-main().catch((err) => {
+/**
+ * Wait for buffered output to reach the terminal, then exit.
+ *
+ * Baileys keeps timers and a socket alive after a command has finished, so the
+ * process would otherwise sit there with nothing left to do. `ui` never
+ * resolves, so it is unaffected by this.
+ */
+function flushAndExit(code) {
+  const streams = [process.stdout, process.stderr].filter((s) => s.writableLength > 0);
+  if (streams.length === 0) process.exit(code);
+
+  let pending = streams.length;
+  const done = () => {
+    pending -= 1;
+    if (pending <= 0) process.exit(code);
+  };
+  for (const stream of streams) stream.write('', done);
+  // Never hang on a stream that will not drain.
+  setTimeout(() => process.exit(code), 2000).unref();
+}
+
+main().then(() => flushAndExit(0)).catch((err) => {
   // Errors we raised ourselves already say the right thing.
   if (err?.userFacing) {
     process.stderr.write(`\n${err.message}\n`);
-    process.exit(1);
+    return flushAndExit(1);
   }
 
   const hint = explain(err);
@@ -483,5 +504,5 @@ main().catch((err) => {
   } else {
     process.stderr.write(`\n${err?.stack ?? err}\n`);
   }
-  process.exit(1);
+  flushAndExit(1);
 });
