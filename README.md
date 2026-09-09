@@ -33,7 +33,38 @@ on your machine.
 ## Requirements
 
 - Node.js 22.5 or newer (it uses the built-in `node:sqlite`)
-- Chrome or Chromium (Puppeteer will download one if none is found)
+- Chrome, Chromium or Edge — Puppeteer downloads its own during `npm install`,
+  and an already-installed browser is used as a fallback
+
+### If npm blocks Puppeteer's install script
+
+Some npm configurations refuse postinstall scripts, which is how Puppeteer
+fetches its Chromium. npm says so at the end of the install:
+
+```
+npm warn install-scripts   puppeteer@24.38.0 (postinstall: node install.mjs)
+```
+
+wassap falls back to a system Chrome, Chromium or Edge, so it will usually
+still work. If it reports that no browser is available, either allow the
+download or point it at a browser you have:
+
+```bat
+npm install-scripts approve puppeteer
+npm install
+```
+
+```bat
+set PUPPETEER_EXECUTABLE_PATH=C:\Program Files\Google\Chrome\Application\chrome.exe
+```
+
+### About the npm audit warnings
+
+`npm install` reports 5 high-severity advisories. They are one issue counted
+five times: a path-traversal bug in `extract-zip`, which Puppeteer uses solely
+to unpack a browser it downloads from Google. It is not reachable from anything
+wassap does with your messages. There is no patched release upstream yet, so
+`npm audit fix` reports the same five and changes nothing.
 
 ## Setup
 

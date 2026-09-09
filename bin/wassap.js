@@ -11,6 +11,7 @@ import { renderTable, renderSummary } from '../src/report/table.js';
 import { toJson, toCsv } from '../src/report/data.js';
 import { renderHtml } from '../src/report/html.js';
 import { SORT_KEYS } from '../src/filters.js';
+import { describeStore, resetStore } from '../src/reset.js';
 import { bold, dim, cyan, yellow } from '../src/report/style.js';
 
 const HELP = `
@@ -284,43 +285,30 @@ function cmdStatus() {
 }
 
 function cmdReset(values) {
-  const file = dbPath();
-  const session = sessionDir();
-  const db = openDb();
-  const totals = counts(db);
-  const isDemo = getMeta(db, 'demo') === '1';
+  const store = describeStore();
 
   if (!values.yes) {
     process.stdout.write(
       `${bold('wassap reset')} would delete:\n` +
-        `  ${file}\n` +
-        `    ${totals.chats} chats, ${totals.messages} messages` +
-        `${isDemo ? dim(' (demo data)') : ''}\n` +
-        (values.all ? `  ${session}\n    the linked device session\n` : '') +
+        `  ${store.file}\n` +
+        (store.exists
+          ? `    ${store.chats} chats, ${store.messages} messages` +
+            `${store.isDemo ? dim(' (demo data)') : ''}\n`
+          : `    ${dim('nothing stored yet')}\n`) +
+        (values.all ? `  ${store.session}\n    the linked device session\n` : '') +
         `\nRe-run with --yes to confirm.\n`
     );
     return;
   }
 
-  for (const suffix of ['', '-wal', '-shm']) {
-    fs.rmSync(`${file}${suffix}`, { force: true });
+  const removed = resetStore({ all: Boolean(values.all) });
+  if (removed.length === 0) {
+    process.stdout.write('Nothing to delete.\n');
+    return;
   }
-  process.stdout.write(`Deleted ${file}\n`);
-
+  for (const path of removed) process.stdout.write(`Deleted ${path}\n`);
   if (values.all) {
-    fs.rmSync(session, { recursive: true, force: true });
-    process.stdout.write(`Deleted ${session}\n`);
     process.stdout.write(dim('Also unlink "wassap" under WhatsApp > Linked devices.\n'));
-  }
-}
-
-function cmdLogout() {
-  const dir = sessionDir();
-  if (fs.existsSync(dir)) {
-    fs.rmSync(dir, { recursive: true, force: true });
-    process.stdout.write('Session removed. Also unlink "wassap" under WhatsApp > Linked devices.\n');
-  } else {
-    process.stdout.write('No stored session to remove.\n');
   }
 }
 

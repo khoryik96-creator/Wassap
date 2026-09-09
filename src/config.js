@@ -73,6 +73,9 @@ export function chromiumPath() {
  * `npm install`, and that is always the safest choice, so an explicit override
  * aside we let Puppeteer use it by returning undefined. Only when that download
  * was skipped or removed do we go looking for a system Chrome, Chromium or Edge.
+ *
+ * Throws a UserError when nothing is available, rather than letting Puppeteer
+ * fail later with a less actionable message.
  */
 export async function resolveBrowserPath() {
   if (process.env.PUPPETEER_EXECUTABLE_PATH) return process.env.PUPPETEER_EXECUTABLE_PATH;
@@ -85,5 +88,18 @@ export async function resolveBrowserPath() {
     /* puppeteer missing or unable to report a path - fall through */
   }
 
-  return chromiumPath();
+  const system = chromiumPath();
+  if (system) return system;
+
+  const { UserError } = await import('./errors.js');
+  throw new UserError(
+    'No browser available to drive WhatsApp Web.\n\n' +
+      "Puppeteer's own Chromium is missing. That usually means its postinstall\n" +
+      'script was blocked (npm prints "install scripts blocked" when this happens).\n\n' +
+      'Fix it with either:\n' +
+      '  npm install-scripts approve puppeteer && npm install\n' +
+      'or point wassap at a browser you already have, for example:\n' +
+      '  Windows      set PUPPETEER_EXECUTABLE_PATH=C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe\n' +
+      '  macOS/Linux  export PUPPETEER_EXECUTABLE_PATH=/path/to/chrome'
+  );
 }
