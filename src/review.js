@@ -1,4 +1,4 @@
-import { allChats } from './db.js';
+import { allChats, threadStates } from './db.js';
 import { analyzeAll, summarize } from './analyze.js';
 import { applyFilters, sortThreads } from './filters.js';
 
@@ -19,7 +19,19 @@ export function buildThreads(db, now = Date.now()) {
     bucket.push(row);
   }
 
-  return analyzeAll(chats, messagesByChat, now);
+  const threads = analyzeAll(chats, messagesByChat, now);
+
+  // Fold in whatever triage a person has recorded in the UI.
+  const states = threadStates(db);
+  for (const thread of threads) {
+    const state = states.get(thread.chatId);
+    const snoozedUntil = state?.snoozed_until ?? null;
+    const stillSnoozed = state?.status === 'snoozed' && snoozedUntil && snoozedUntil > now;
+    thread.status = stillSnoozed ? 'snoozed' : state?.status === 'snoozed' ? 'open' : state?.status ?? 'open';
+    thread.note = state?.note ?? null;
+    thread.snoozedUntil = snoozedUntil;
+  }
+  return threads;
 }
 
 /** Analyse, filter, sort and cap — the whole `review` pipeline. */

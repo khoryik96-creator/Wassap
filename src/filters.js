@@ -43,12 +43,16 @@ export function applyFilters(threads, opts = {}) {
     search = null,
     minMessages = 1,
     unreadOnly = false,
+    statuses = ['open'],
   } = opts;
 
   const wantDirection = DIRECTION_MAP[direction] ?? null;
   const needle = search ? String(search).toLowerCase() : null;
 
+  const wantStatus = statuses === 'all' ? null : new Set(statuses);
+
   return threads.filter((t) => {
+    if (wantStatus && !wantStatus.has(t.status ?? 'open')) return false;
     if (wantDirection && t.direction !== wantDirection) return false;
 
     if (chatType === 'direct' && t.isGroup) return false;

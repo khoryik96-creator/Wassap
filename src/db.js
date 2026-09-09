@@ -41,6 +41,16 @@ CREATE TABLE IF NOT EXISTS messages (
 );
 
 CREATE INDEX IF NOT EXISTS idx_messages_chat_ts ON messages(chat_id, timestamp);
+
+-- Triage state a person sets in the UI. Kept apart from synced data so a
+-- resync never overwrites it.
+CREATE TABLE IF NOT EXISTS thread_state (
+  chat_id       TEXT PRIMARY KEY,
+  status        TEXT NOT NULL DEFAULT 'open',
+  note          TEXT,
+  snoozed_until INTEGER,
+  updated_at    INTEGER NOT NULL
+);
 `;
 
 export function openDb(file = dbPath()) {
@@ -136,4 +146,48 @@ function normalize(v, fallback = null) {
   if (v === undefined || v === null) return fallback;
   if (typeof v === 'boolean') return v ? 1 : 0;
   return v;
+}
+
+export const THREAD_STATUSES = ['open', 'handled', 'ignored', 'snoozed'];
+
+/** Every triage record, keyed by chat id. */
+export function threadStates(db) {
+  const rows = db.prepare('SELECT * FROM thread_state').all();
+  return new Map(rows.map((r) => [r.chat_id, r]));
+}
+
+export function threadState(db, chatId) {
+  return db.prepare('SELECT * FROM thread_state WHERE chat_id = ?').get(chatId) ?? null;
+}
+
+/**
+ * Merge a change into a thread's triage record. Only the fields present in
+ * `patch` are touched, so setting a note does not clear a snooze.
+ */
+export function setThreadState(db, chatId, patch = {}) {
+  const current = threadState(db, chatId);
+  const next = {
+    status: patch.status ?? current?.status ?? 'open',
+    note: patch.note !== undefined ? patch.note : current?.note ?? null,
+    snoozed_until:
+      patch.snoozed_until !== undefined ? patch.snoozed_until : current?.snoozed_until ?? null,
+  };
+
+  if (!THREAD_STATUSES.includes(next.status)) {
+    throw new Error(`Unknown status "${next.status}". Use one of: ${THREAD_STATUSES.join(', ')}.`);
+  }
+  // A snooze without an end date is just "open".
+  if (next.status === 'snoozed' && !next.snoozed_until) next.status = 'open';
+
+  db.prepare(
+    `INSERT INTO thread_state (chat_id, status, note, snoozed_until, updated_at)
+     VALUES (?, ?, ?, ?, ?)
+     ON CONFLICT(chat_id) DO UPDATE SET
+       status = excluded.status,
+       note = excluded.note,
+       snoozed_until = excluded.snoozed_until,
+       updated_at = excluded.updated_at`
+  ).run(chatId, next.status, next.note, next.snoozed_until, Date.now());
+
+  return threadState(db, chatId);
 }

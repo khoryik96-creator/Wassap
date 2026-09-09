@@ -12,6 +12,7 @@ import { toJson, toCsv } from '../src/report/data.js';
 import { renderHtml } from '../src/report/html.js';
 import { SORT_KEYS } from '../src/filters.js';
 import { describeStore, resetStore } from '../src/reset.js';
+import { UserError } from '../src/errors.js';
 import { invocation, command, setInvocation } from '../src/invocation.js';
 
 // How this user actually invokes the tool, so every suggestion is copy-pasteable.
@@ -31,6 +32,7 @@ ${bold('COMMANDS')}
   review                Report unanswered conversations (default command).
   status                Show what is stored locally and when it was last synced.
   reset                 Delete the local message database (needs --yes).
+  ui                    Open a local dashboard for reviewing and triaging.
   web-versions          List WhatsApp Web page versions that can be pinned.
   logout                Unlink the device and delete the stored session.
 
@@ -61,6 +63,10 @@ ${bold('OUTPUT')}
   --csv                         Write CSV (stdout unless --out is given).
   --html                        Write an interactive HTML dashboard (report.html).
   --out <path>                  Destination file for the chosen format.
+
+${bold('UI OPTIONS')}
+  --port <n>                    Port to listen on. (4173)
+  --open                        Open the dashboard in your browser.
 
 ${bold('WHEN WHATSAPP WEB BREAKS THE LIBRARY')}
   If sync fails inside WhatsApp's own code, pin an older page version:
@@ -116,6 +122,8 @@ const OPTIONS = {
   messages: { type: 'string' },
   'no-groups': { type: 'boolean' },
   backend: { type: 'string' },
+  port: { type: 'string' },
+  open: { type: 'boolean' },
   yes: { type: 'boolean' },
   count: { type: 'string' },
   all: { type: 'boolean' },
@@ -302,6 +310,38 @@ function cmdStatus() {
   }
 }
 
+async function cmdUi(values) {
+  const db = openDb();
+  if (counts(db).chats === 0) {
+    throw new UserError(
+      `No data yet. Run \`${command('login', CMD)}\`, then \`${command('sync', CMD)}\`.`
+    );
+  }
+
+  const { startServer } = await import('../src/server.js');
+  const port = integer(values.port, '--port') ?? 4173;
+  const { port: actual } = await startServer({ port });
+  const url = `http://127.0.0.1:${actual}`;
+
+  process.stdout.write(`${bold('wassap ui')} listening on ${cyan(url)}\n`);
+  process.stdout.write(dim('  bound to localhost only - nobody else on your network can reach it\n'));
+  process.stdout.write(dim('  press Ctrl+C to stop\n'));
+
+  if (values.open) {
+    const opener = process.platform === 'win32' ? 'start'
+      : process.platform === 'darwin' ? 'open' : 'xdg-open';
+    const { spawn } = await import('node:child_process');
+    try {
+      spawn(opener, [url], { shell: process.platform === 'win32', stdio: 'ignore', detached: true }).unref();
+    } catch {
+      /* opening a browser is a convenience, not a requirement */
+    }
+  }
+
+  // Hold the process open until interrupted.
+  return new Promise(() => {});
+}
+
 async function cmdWebVersions(values) {
   const { fetchVersions } = await import('../src/webversion.js');
   const versions = await fetchVersions();
@@ -361,7 +401,7 @@ function cmdReset(values) {
 async function main() {
   const argv = process.argv.slice(2);
   const commands = new Set([
-    'login', 'sync', 'review', 'status', 'reset', 'web-versions', 'logout', 'help',
+    'login', 'sync', 'review', 'status', 'reset', 'ui', 'web-versions', 'logout', 'help',
   ]);
   const command = commands.has(argv[0]) ? argv.shift() : 'review';
 
@@ -388,6 +428,8 @@ async function main() {
       return cmdReset(values);
     case 'web-versions':
       return cmdWebVersions(values);
+    case 'ui':
+      return cmdUi(values);
     case 'logout':
       return cmdLogout();
     default:

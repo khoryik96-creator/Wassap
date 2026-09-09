@@ -230,6 +230,7 @@ messages, so they cannot make a dead thread look answered.
 | `review` | Report unanswered conversations (the default command) |
 | `status` | Show what is stored and when it was last synced |
 | `reset` | Delete the local message database (needs `--yes`) |
+| `ui` | Open a local dashboard for reviewing and triaging threads |
 | `web-versions` | List WhatsApp Web page versions available to pin |
 | `logout` | Unlink and delete the stored session |
 
@@ -259,6 +260,25 @@ means days. Dates are anything `Date.parse` understands.
 
 Saved and unsaved describe a person's number, so `--saved` and `--unsaved`
 exclude group chats entirely rather than filing them under unsaved.
+
+## The dashboard
+
+```bash
+wassap ui --open
+```
+
+Serves a local page at `http://127.0.0.1:4173` with the review list on the left
+and the full conversation on the right, so you can read the history before
+deciding what to do. The same filters as the CLI, applied live.
+
+Each thread can be marked **handled**, **snoozed** for a week, or **ignored**,
+and carries a private note. Triage is stored separately from synced data, so a
+resync never overwrites it, and handled threads drop out of the default view
+while staying findable under the status filter.
+
+The server binds to `127.0.0.1` only — it exposes your entire message history,
+so it is not reachable from anywhere else on your network. It reads the local
+database and never sends anything to WhatsApp.
 
 ## Output
 
