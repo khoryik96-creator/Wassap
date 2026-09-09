@@ -18,25 +18,72 @@ export const dbPath = () => path.join(dataDir(), 'wassap.db');
 export const sessionDir = () => path.join(dataDir(), 'session');
 
 /**
- * Chromium to drive. The bundled Playwright build is used when present so the
- * tool works without a separate Puppeteer download; PUPPETEER_EXECUTABLE_PATH
- * always wins if the user sets it.
+ * Browsers to fall back on, per platform, when Puppeteer has no bundled build
+ * of its own. Ordered best-first.
  */
-export function chromiumPath() {
-  if (process.env.PUPPETEER_EXECUTABLE_PATH) return process.env.PUPPETEER_EXECUTABLE_PATH;
-  const candidates = [
+function systemBrowserCandidates() {
+  if (process.platform === 'win32') {
+    const roots = [
+      process.env.LOCALAPPDATA,
+      process.env.PROGRAMFILES,
+      process.env['PROGRAMFILES(X86)'],
+    ].filter(Boolean);
+    const suffixes = [
+      String.raw`Google\Chrome\Application\chrome.exe`,
+      String.raw`Chromium\Application\chrome.exe`,
+      String.raw`Microsoft\Edge\Application\msedge.exe`,
+    ];
+    return roots.flatMap((root) => suffixes.map((suffix) => path.join(root, suffix)));
+  }
+
+  if (process.platform === 'darwin') {
+    return [
+      '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome',
+      '/Applications/Chromium.app/Contents/MacOS/Chromium',
+      '/Applications/Microsoft Edge.app/Contents/MacOS/Microsoft Edge',
+    ];
+  }
+
+  return [
     '/opt/pw-browsers/chromium',
     '/usr/bin/chromium',
     '/usr/bin/chromium-browser',
     '/usr/bin/google-chrome',
-    '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome',
+    '/usr/bin/microsoft-edge',
   ];
-  for (const c of candidates) {
+}
+
+/** First candidate that actually exists on disk, or undefined. */
+export function chromiumPath() {
+  if (process.env.PUPPETEER_EXECUTABLE_PATH) return process.env.PUPPETEER_EXECUTABLE_PATH;
+  for (const candidate of systemBrowserCandidates()) {
     try {
-      if (fs.existsSync(c)) return c;
+      if (fs.existsSync(candidate)) return candidate;
     } catch {
-      /* unreadable path — try the next candidate */
+      /* unreadable path - try the next candidate */
     }
   }
-  return undefined; // let puppeteer fall back to its own bundled build
+  return undefined;
+}
+
+/**
+ * Which browser to hand Puppeteer.
+ *
+ * Puppeteer downloads a Chromium matched to its own protocol version during
+ * `npm install`, and that is always the safest choice, so an explicit override
+ * aside we let Puppeteer use it by returning undefined. Only when that download
+ * was skipped or removed do we go looking for a system Chrome, Chromium or Edge.
+ */
+export async function resolveBrowserPath() {
+  if (process.env.PUPPETEER_EXECUTABLE_PATH) return process.env.PUPPETEER_EXECUTABLE_PATH;
+
+  try {
+    const puppeteer = (await import('puppeteer')).default;
+    const bundled = puppeteer.executablePath();
+    if (bundled && fs.existsSync(bundled)) return undefined;
+  } catch {
+    /* puppeteer missing or unable to report a path - fall through */
+  }
+
+  return chromiumPath();
 }

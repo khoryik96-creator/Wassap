@@ -46,6 +46,27 @@ node bin/wassap.js review   # see what is unanswered
 
 Optionally `npm link` so it is just `wassap` from anywhere.
 
+### Windows
+
+Run the commands from the project folder, not from `C:\Windows\System32`.
+In `cmd.exe`, environment variables are set on their own line with `set`
+(`VAR=value command` is bash syntax and will not work):
+
+```bat
+cd /d %USERPROFILE%
+git clone https://github.com/khoryik96-creator/Wassap.git
+cd Wassap
+npm install
+node bin/wassap.js login
+node bin/wassap.js sync
+node bin/wassap.js review
+```
+
+In PowerShell the variable syntax is `$env:WASSAP_HOME = "..."` instead.
+
+If accented characters or the table borders look like mojibake in `cmd.exe`,
+switch the console to UTF-8 first with `chcp 65001`, or use Windows Terminal.
+
 ## Try it without linking an account
 
 ```bash
@@ -53,8 +74,17 @@ WASSAP_HOME=/tmp/wassap-demo node scripts/seed-demo.js
 WASSAP_HOME=/tmp/wassap-demo node bin/wassap.js review
 ```
 
+On Windows (`cmd.exe`):
+
+```bat
+set WASSAP_HOME=%TEMP%\wassap-demo
+node scripts/seed-demo.js
+node bin/wassap.js review
+```
+
 This fills a throwaway database with synthetic conversations so you can see the
-output and the dashboard before deciding to link anything.
+output and the dashboard before deciding to link anything. Unset the variable
+again (`set WASSAP_HOME=`) before working with your real account.
 
 ## What counts as unanswered
 

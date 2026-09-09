@@ -1,4 +1,4 @@
-import { sessionDir, chromiumPath } from './config.js';
+import { sessionDir, resolveBrowserPath } from './config.js';
 
 /**
  * whatsapp-web.js drives a real WhatsApp Web session in headless Chromium.
@@ -19,12 +19,13 @@ async function loadLibrary() {
 
 export async function createClient() {
   const { Client, LocalAuth } = await loadLibrary();
+  const executablePath = await resolveBrowserPath();
 
   return new Client({
     authStrategy: new LocalAuth({ dataPath: sessionDir() }),
     puppeteer: {
       headless: true,
-      executablePath: chromiumPath(),
+      executablePath,
       args: [
         '--no-sandbox',
         '--disable-setuid-sandbox',
