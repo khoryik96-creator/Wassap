@@ -10,7 +10,7 @@ import { loadBackend } from './backends/index.js';
  * Backends differ in how they reach WhatsApp but hand back the same rows, so
  * everything below this point is shared.
  */
-export async function sync(db, { limit = 50, includeGroups = true, backend, onStatus = () => {} } = {}) {
+export async function sync(db, { limit = 50, includeGroups = true, backend, onStatus = () => {}, onQr = null } = {}) {
   if (getMeta(db, 'demo') === '1') {
     throw new UserError(
       'This database holds demo data from scripts/seed-demo.js.\n' +
@@ -21,7 +21,7 @@ export async function sync(db, { limit = 50, includeGroups = true, backend, onSt
   const { name, harvest } = await loadBackend(backend);
   onStatus(`Connecting to WhatsApp (${name})...`);
 
-  const result = await harvest({ limit, includeGroups, onStatus });
+  const result = await harvest({ limit, includeGroups, onStatus, onQr });
 
   const chats = (result.chats ?? []).filter((c) => c && !isExcludedChatId(c.id));
   const keep = new Set(chats.map((c) => c.id));

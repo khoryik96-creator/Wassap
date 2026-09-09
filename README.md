@@ -137,8 +137,20 @@ wassap does with your messages. There is no patched release upstream yet, so
 
 ## Setup
 
+**Windows:** double-click `wassap.bat`. **macOS:** double-click `wassap.command`.
+The first run installs dependencies, then opens the dashboard in your browser.
+Link your phone and sync from there — no typing required.
+
+Prefer the terminal:
+
 ```bash
 npm install
+node bin/wassap.js ui        # everything in the browser
+```
+
+Or drive it entirely from the command line:
+
+```bash
 node bin/wassap.js login    # scan the QR with WhatsApp > Linked devices
 node bin/wassap.js sync     # pull your chats into the local database
 node bin/wassap.js review   # see what is unanswered
@@ -270,6 +282,10 @@ wassap ui --open
 Serves a local page at `http://127.0.0.1:4173` with the review list on the left
 and the full conversation on the right, so you can read the history before
 deciding what to do. The same filters as the CLI, applied live.
+
+Linking and syncing happen in the page too: **Link device** shows the QR code
+inline, **Sync now** streams progress as it runs. So the dashboard works from a
+completely empty start — you never need the command line.
 
 Each thread can be marked **handled**, **snoozed** for a week, or **ignored**,
 and carries a private note. Triage is stored separately from synced data, so a

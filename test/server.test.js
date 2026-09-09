@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { openDb, upsertChat, upsertMessages, setThreadState, threadState } from '../src/db.js';
+import { openDb, upsertChat, upsertMessages, setThreadState, threadState, setMeta } from '../src/db.js';
 import { review } from '../src/review.js';
 import { filtersFromQuery, threadDetail, startServer } from '../src/server.js';
 
@@ -172,4 +172,72 @@ test('the server binds to loopback only', async (t) => {
   t.after(() => server.close());
   assert.equal(host, '127.0.0.1', 'your whole message history must not be on the network');
   assert.equal(server.address().address, '127.0.0.1');
+});
+
+test('the state endpoint reports what the UI needs to orient itself', async (t) => {
+  const { file, db } = tempDb(t);
+  setMeta(db, 'account', '60182071315:59@s.whatsapp.net');
+  setMeta(db, 'last_sync', NOW);
+  setMeta(db, 'backend', 'baileys');
+
+  const { server, port } = await startServer({ port: 0, dbFile: file });
+  t.after(() => server.close());
+
+  const state = await (await fetch(`http://127.0.0.1:${port}/api/state`)).json();
+  assert.equal(state.account, '60182071315:59@s.whatsapp.net');
+  assert.equal(state.backend, 'baileys');
+  assert.equal(state.lastSync, NOW);
+  assert.equal(state.chats, 1);
+  assert.equal(state.messages, 2);
+  assert.equal(state.isDemo, false);
+  assert.equal(state.job, null, 'nothing running yet');
+});
+
+test('the events endpoint is a server-sent event stream', async (t) => {
+  const { file } = tempDb(t);
+  const { server, port } = await startServer({ port: 0, dbFile: file });
+  t.after(() => server.close());
+
+  const controller = new AbortController();
+  const res = await fetch(`http://127.0.0.1:${port}/api/events`, { signal: controller.signal });
+  assert.equal(res.status, 200);
+  assert.match(res.headers.get('content-type'), /text\/event-stream/);
+  controller.abort();
+});
+
+test('a job failure is reported through the stream rather than crashing the server', async (t) => {
+  const { file, db } = tempDb(t);
+  setMeta(db, 'demo', '1'); // sync refuses on demo data, so this stays offline
+  const { server, port } = await startServer({ port: 0, dbFile: file });
+  t.after(() => server.close());
+  const base = `http://127.0.0.1:${port}`;
+
+  const started = await fetch(`${base}/api/sync`, { method: 'POST' });
+  assert.equal(started.status, 202);
+
+  // Give the job a moment to fail, then check it was recorded, not thrown away.
+  await new Promise((resolve) => setTimeout(resolve, 400));
+  const state = await (await fetch(`${base}/api/state`)).json();
+  assert.equal(state.job.kind, 'sync');
+  assert.equal(state.job.running, false);
+  assert.match(state.job.error, /demo data/);
+
+  // The server is still answering afterwards.
+  assert.equal((await fetch(`${base}/api/state`)).status, 200);
+});
+
+test('there is no QR image until something asks for one', async (t) => {
+  const { file } = tempDb(t);
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'wassap-home-'));
+  const previous = process.env.WASSAP_HOME;
+  process.env.WASSAP_HOME = dir;
+  t.after(() => {
+    if (previous === undefined) delete process.env.WASSAP_HOME;
+    else process.env.WASSAP_HOME = previous;
+    fs.rmSync(dir, { recursive: true, force: true });
+  });
+
+  const { server, port } = await startServer({ port: 0, dbFile: file });
+  t.after(() => server.close());
+  assert.equal((await fetch(`http://127.0.0.1:${port}/api/qr.png`)).status, 404);
 });

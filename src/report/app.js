@@ -40,7 +40,7 @@ button {
 button:hover { border-color:var(--muted); }
 button.primary { background:var(--accent); border-color:var(--accent); color:#fff; }
 button.primary:hover { opacity:.9; }
-main { display:grid; grid-template-columns:minmax(340px,1fr) minmax(380px,1.2fr); height:calc(100vh - 108px); }
+main { display:grid; grid-template-columns:minmax(340px,1fr) minmax(380px,1.2fr); height:calc(100vh - var(--chrome, 160px)); overflow:hidden; }
 .list { overflow-y:auto; border-right:1px solid var(--line); }
 .row { padding:11px 18px; border-bottom:1px solid var(--line); cursor:pointer; display:grid; gap:3px; }
 .row:hover { background:var(--panel); }
@@ -61,6 +61,14 @@ main { display:grid; grid-template-columns:minmax(340px,1fr) minmax(380px,1.2fr)
 .bubble.them { align-self:flex-start; background:var(--theirs); }
 .bubble .when { display:block; margin-top:4px; font-size:11px; color:var(--muted); }
 .empty { color:var(--muted); padding:36px 18px; text-align:center; }
+.setup { padding:10px 18px; border-bottom:1px solid var(--line); background:var(--panel); display:flex; flex-wrap:wrap; gap:10px 14px; align-items:center; }
+.setup .state { color:var(--muted); font-size:12.5px; flex:1 1 260px; }
+.job { padding:10px 18px; border-bottom:1px solid var(--line); background:var(--bg); display:none; gap:14px; align-items:flex-start; }
+.job.on { display:flex; }
+.job .log { flex:1 1 auto; max-height:150px; overflow-y:auto; font:12px/1.55 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; color:var(--muted); white-space:pre-wrap; }
+.job img { width:190px; height:190px; border-radius:8px; background:#fff; padding:6px; display:none; }
+.job img.on { display:block; }
+.err { color:var(--alert); }
 textarea { width:100%; min-height:70px; resize:vertical; }
 .saved { color:var(--accent); font-size:12px; }
 `;
@@ -208,10 +216,92 @@ async function act(thread, what) {
   if (still) open(still); else $('detail').innerHTML = '<div class="empty">Done. Pick another conversation.</div>';
 }
 
+function fitMain() {
+  const chrome = document.querySelector('header').offsetHeight +
+    document.querySelector('.setup').offsetHeight +
+    document.querySelector('.filters').offsetHeight +
+    ($('job').classList.contains('on') ? $('job').offsetHeight : 0);
+  document.documentElement.style.setProperty('--chrome', chrome + 'px');
+}
+
+function when(ms) {
+  if (!ms) return 'never';
+  const days = Math.floor((Date.now() - ms) / DAY);
+  if (days > 0) return days + 'd ago';
+  return new Date(ms).toLocaleTimeString();
+}
+
+async function refreshState() {
+  const s = await (await fetch('/api/state')).json();
+  const bits = [];
+  bits.push(s.account ? 'Linked: ' + s.account.split(':')[0].split('@')[0] : 'Not linked yet');
+  bits.push('last sync ' + when(s.lastSync));
+  bits.push(s.chats + ' chats, ' + s.messages + ' messages');
+  if (s.isDemo) bits.push('DEMO DATA');
+  $('state').textContent = bits.join('  ' + String.fromCharCode(183) + '  ');
+  $('link').disabled = Boolean(s.job && s.job.running);
+  $('syncnow').disabled = Boolean(s.job && s.job.running);
+  fitMain();
+}
+
+function logLine(text, isError) {
+  const div = document.createElement('div');
+  if (isError) div.className = 'err';
+  div.textContent = text;
+  $('joblog').appendChild(div);
+  $('joblog').scrollTop = $('joblog').scrollHeight;
+}
+
+function showJob(on) {
+  $('job').classList.toggle('on', on);
+  fitMain();
+}
+
+function connectEvents() {
+  const source = new EventSource('/api/events');
+  source.onmessage = (event) => {
+    const data = JSON.parse(event.data);
+    if (data.type === 'started') {
+      $('joblog').textContent = '';
+      $('qr').classList.remove('on');
+      showJob(true);
+      $('link').disabled = true;
+      $('syncnow').disabled = true;
+    } else if (data.type === 'status') {
+      logLine(data.message);
+      showJob(true);
+    } else if (data.type === 'qr') {
+      $('qr').src = '/api/qr.png?at=' + data.at;
+      $('qr').classList.add('on');
+      showJob(true);
+      fitMain();
+    } else if (data.type === 'done') {
+      logLine('Finished.');
+      $('qr').classList.remove('on');
+      refreshState();
+      load();
+    } else if (data.type === 'error') {
+      logLine(data.message, true);
+      refreshState();
+    }
+  };
+}
+
+async function startJob(what) {
+  const res = await fetch('/api/' + what, { method: 'POST' });
+  if (res.status === 409) logLine('Something is already running.', true);
+}
+
 for (const id of ['q','direction','saved','chatType','statuses','sort','minwait']) {
   $(id).addEventListener('input', load);
 }
-$('refresh').addEventListener('click', load);
+$('refresh').addEventListener('click', () => { load(); refreshState(); });
+$('link').addEventListener('click', () => startJob('login'));
+$('syncnow').addEventListener('click', () => startJob('sync'));
+window.addEventListener('resize', fitMain);
+
+connectEvents();
+refreshState();
 load();
 `;
 
@@ -229,6 +319,17 @@ export function renderApp() {
   <h1>Unanswered conversations</h1>
   <div class="counts" id="counts">Loading...</div>
 </header>
+
+<div class="setup">
+  <div class="state" id="state">Checking...</div>
+  <button id="link">Link device</button>
+  <button class="primary" id="syncnow">Sync now</button>
+</div>
+
+<div class="job" id="job">
+  <div class="log" id="joblog"></div>
+  <img id="qr" alt="WhatsApp QR code">
+</div>
 
 <div class="filters">
   <input type="search" id="q" placeholder="Search name, number or text">

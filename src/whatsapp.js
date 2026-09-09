@@ -64,7 +64,7 @@ export async function createClient({ onStatus = () => {} } = {}) {
  *
  * `onStatus` receives short progress strings so callers control the output.
  */
-export async function withClient(fn, { onStatus = () => {} } = {}) {
+export async function withClient(fn, { onStatus = () => {}, onQr = null } = {}) {
   const client = await createClient({ onStatus });
   let attempt = 0;
   let toldAboutImage = false;
@@ -73,7 +73,7 @@ export async function withClient(fn, { onStatus = () => {} } = {}) {
   // event, and only the newest code will link - so every one of them is drawn.
   client.on('qr', async (qr) => {
     attempt += 1;
-    const image = await showQr(qr, attempt, onStatus);
+    const image = onQr ? (await onQr(qr, attempt), null) : await showQr(qr, attempt, onStatus);
 
     if (attempt === 1) {
       onStatus('This code expires about every 20 seconds and will redraw itself.');

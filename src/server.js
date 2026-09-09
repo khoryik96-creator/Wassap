@@ -1,8 +1,12 @@
 import http from 'node:http';
-import { openDb, setThreadState, threadState, messagesForChat, THREAD_STATUSES } from './db.js';
+import fs from 'node:fs';
+import path from 'node:path';
+import { openDb, setThreadState, threadState, messagesForChat, getMeta, counts, THREAD_STATUSES } from './db.js';
 import { review } from './review.js';
 import { previewBody } from './analyze.js';
 import { renderApp } from './report/app.js';
+import { dataDir, sessionDir } from './config.js';
+import { writeQrImage } from './qr.js';
 
 /**
  * A small local server behind the triage UI. Deliberately dependency-free and
@@ -82,8 +86,79 @@ export function threadDetail(db, chatId) {
   return { chatId, messages, state: threadState(db, chatId) };
 }
 
+/**
+ * Linking and syncing are long-running and can only sensibly happen one at a
+ * time, so the server runs at most one job and streams its progress to any
+ * page that is watching.
+ */
+function createJobRunner(db) {
+  const watchers = new Set();
+  let current = null; // { kind, startedAt, log, qrAt, finished, error }
+
+  const broadcast = (event) => {
+    const line = `data: ${JSON.stringify(event)}\n\n`;
+    for (const res of watchers) {
+      try {
+        res.write(line);
+      } catch {
+        watchers.delete(res);
+      }
+    }
+  };
+
+  const status = (message) => {
+    if (current) current.log.push(message);
+    broadcast({ type: 'status', message });
+  };
+
+  return {
+    watch(res) {
+      watchers.add(res);
+      res.on('close', () => watchers.delete(res));
+      if (current) {
+        for (const message of current.log) res.write(`data: ${JSON.stringify({ type: 'status', message })}\n\n`);
+        if (current.qrAt) res.write(`data: ${JSON.stringify({ type: 'qr', at: current.qrAt })}\n\n`);
+      }
+    },
+
+    snapshot() {
+      return current
+        ? { kind: current.kind, running: !current.finished, error: current.error ?? null, log: current.log.slice(-40) }
+        : null;
+    },
+
+    busy() {
+      return Boolean(current && !current.finished);
+    },
+
+    async start(kind, run) {
+      if (this.busy()) throw new Error(`A ${current.kind} is already running.`);
+      current = { kind, startedAt: Date.now(), log: [], qrAt: null, finished: false, error: null };
+      broadcast({ type: 'started', kind });
+
+      const onQr = async (qr) => {
+        await writeQrImage(qr, path.join(dataDir(), 'qr.png'));
+        current.qrAt = Date.now();
+        status('Scan the QR code below with WhatsApp: Settings > Linked devices > Link a device.');
+        broadcast({ type: 'qr', at: current.qrAt });
+      };
+
+      try {
+        const result = await run({ onStatus: status, onQr });
+        current.finished = true;
+        broadcast({ type: 'done', kind, result: result ?? null });
+      } catch (err) {
+        current.finished = true;
+        current.error = err.message;
+        broadcast({ type: 'error', kind, message: err.message });
+      }
+    },
+  };
+}
+
 export function createServer({ dbFile } = {}) {
   const db = openDb(dbFile);
+  const jobs = createJobRunner(db);
 
   return http.createServer(async (req, res) => {
     let url;
@@ -102,6 +177,65 @@ export function createServer({ dbFile } = {}) {
       // Browsers request this unprompted; answering keeps the console clean.
       if (req.method === 'GET' && pathname === '/favicon.ico') {
         return send(res, 204, '');
+      }
+
+      if (req.method === 'GET' && pathname === '/api/state') {
+        const totals = counts(db);
+        return send(res, 200, {
+          linked: fs.existsSync(path.join(sessionDir(), 'baileys')) || fs.existsSync(sessionDir()),
+          account: getMeta(db, 'account'),
+          backend: getMeta(db, 'backend'),
+          lastSync: Number(getMeta(db, 'last_sync')) || null,
+          isDemo: getMeta(db, 'demo') === '1',
+          chats: totals.chats,
+          messages: totals.messages,
+          job: jobs.snapshot(),
+        }, JSON_HEADERS);
+      }
+
+      // Server-sent events: progress for whichever job is running.
+      if (req.method === 'GET' && pathname === '/api/events') {
+        res.writeHead(200, {
+          'content-type': 'text/event-stream',
+          'cache-control': 'no-store',
+          connection: 'keep-alive',
+        });
+        res.write('retry: 2000\n\n');
+        jobs.watch(res);
+        return undefined;
+      }
+
+      if (req.method === 'GET' && pathname === '/api/qr.png') {
+        const file = path.join(dataDir(), 'qr.png');
+        if (!fs.existsSync(file)) return send(res, 404, { error: 'No QR code right now.' }, JSON_HEADERS);
+        return send(res, 200, fs.readFileSync(file), { 'content-type': 'image/png' });
+      }
+
+      if (req.method === 'POST' && pathname === '/api/login') {
+        if (jobs.busy()) return send(res, 409, { error: 'Something is already running.' }, JSON_HEADERS);
+        const { loadBackend } = await import('./backends/index.js');
+        jobs.start('login', async ({ onStatus, onQr }) => {
+          const { name, login } = await loadBackend();
+          onStatus(`Linking via ${name}...`);
+          const who = await login({ onStatus, onQr });
+          onStatus(`Linked as ${who.name ?? who.account ?? 'your account'}.`);
+          return who;
+        });
+        return send(res, 202, { started: 'login' }, JSON_HEADERS);
+      }
+
+      if (req.method === 'POST' && pathname === '/api/sync') {
+        if (jobs.busy()) return send(res, 409, { error: 'Something is already running.' }, JSON_HEADERS);
+        const { sync } = await import('./sync.js');
+        jobs.start('sync', async ({ onStatus, onQr }) => {
+          const result = await sync(db, { onStatus, onQr });
+          onStatus(
+            `Synced ${result.chats} chats and ${result.messages} messages. ` +
+              `Stored: ${result.stored.chats} chats, ${result.stored.messages} messages.`
+          );
+          return result;
+        });
+        return send(res, 202, { started: 'sync' }, JSON_HEADERS);
       }
 
       if (req.method === 'GET' && pathname === '/api/threads') {

@@ -311,13 +311,8 @@ function cmdStatus() {
 }
 
 async function cmdUi(values) {
-  const db = openDb();
-  if (counts(db).chats === 0) {
-    throw new UserError(
-      `No data yet. Run \`${command('login', CMD)}\`, then \`${command('sync', CMD)}\`.`
-    );
-  }
-
+  // No guard on empty data: linking and syncing now happen inside the UI, so
+  // this is the right place to start from nothing.
   const { startServer } = await import('../src/server.js');
   const port = integer(values.port, '--port') ?? 4173;
   const { port: actual } = await startServer({ port });
