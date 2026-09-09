@@ -70,6 +70,30 @@ on Windows). If your terminal font makes the code hard for the camera to read,
 open that image instead and scan it from the screen. It is rewritten on every
 refresh, so reopen it after each redraw.
 
+### If sync crashes with "Target closed"
+
+whatsapp-web.js re-injects its scripts on page events without awaiting the
+result. When the browser closes, those calls reject with `Target closed`, and
+Node treats an unhandled rejection as fatal. wassap now ignores that specific
+class of error while a browser session is live, so normal teardown cannot kill
+a run; unrelated failures still surface as usual.
+
+If the browser genuinely dies mid-session, the most reliable fix is to let
+Puppeteer use its own version-matched Chromium rather than a system browser:
+
+```bat
+npm install-scripts approve puppeteer
+npm install
+```
+
+If that is already the case, WhatsApp Web may have shipped a change the library
+has not caught up with. Pin a known-good page version and retry:
+
+```bat
+set WASSAP_WEB_VERSION=2.3000.1027183017
+node bin/wassap.js sync
+```
+
 ### About the npm audit warnings
 
 `npm install` reports 5 high-severity advisories. They are one issue counted
@@ -87,7 +111,10 @@ node bin/wassap.js sync     # pull your chats into the local database
 node bin/wassap.js review   # see what is unanswered
 ```
 
-Optionally `npm link` so it is just `wassap` from anywhere.
+Every command is shown here as `wassap <command>`. Run from a clone that is
+`node bin/wassap.js <command>` — the tool works out which form applies and
+prints suggestions you can paste as-is. Run `npm link` if you would rather have
+a bare `wassap` on your PATH.
 
 ### Windows
 

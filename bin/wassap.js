@@ -12,13 +12,18 @@ import { toJson, toCsv } from '../src/report/data.js';
 import { renderHtml } from '../src/report/html.js';
 import { SORT_KEYS } from '../src/filters.js';
 import { describeStore, resetStore } from '../src/reset.js';
+import { invocation, command, setInvocation } from '../src/invocation.js';
+
+// How this user actually invokes the tool, so every suggestion is copy-pasteable.
+const CMD = invocation(import.meta.url);
+setInvocation(CMD);
 import { bold, dim, cyan, yellow } from '../src/report/style.js';
 
 const HELP = `
 ${bold('wassap')} - review WhatsApp conversations that went unanswered.
 
 ${bold('USAGE')}
-  wassap <command> [options]
+  ${CMD} <command> [options]
 
 ${bold('COMMANDS')}
   login                 Link this tool to your WhatsApp account (shows a QR code).
@@ -65,11 +70,11 @@ ${bold('SYNC OPTIONS')}
   --no-groups                   Skip group chats while syncing.
 
 ${bold('EXAMPLES')}
-  wassap login
-  wassap sync --messages 100
-  wassap review --min-wait 3d --unsaved
-  wassap review --direction them --since 30d --sort waiting
-  wassap review --groups --html --out ~/Desktop/unanswered.html
+  ${CMD} login
+  ${CMD} sync --messages 100
+  ${CMD} review --min-wait 3d --unsaved
+  ${CMD} review --direction them --since 30d --sort waiting
+  ${CMD} review --groups --html --out ~/Desktop/unanswered.html
 `;
 
 const OPTIONS = {
@@ -204,7 +209,7 @@ async function cmdReview(values) {
 
   if (counts(db).chats === 0) {
     process.stderr.write(
-      dim('No data yet. Run `wassap login` to link your account, then `wassap sync`.\n')
+      dim(`No data yet. Run \`${command('login', CMD)}\` to link your account, then \`${command('sync', CMD)}\`.\n`)
     );
     process.exit(1);
   }
@@ -244,7 +249,7 @@ async function cmdSync(values) {
   process.stderr.write(
     `\nSynced ${result.chats} chats. Local store now holds ` +
       `${result.stored.chats} chats and ${result.stored.messages} messages.\n` +
-      dim('Run `wassap review` to see what is unanswered.\n')
+      dim(`Run \`${command('review', CMD)}\` to see what is unanswered.\n`)
   );
 }
 
@@ -255,7 +260,7 @@ async function cmdLogin() {
     async (client) => {
       const me = client.info?.pushname ?? client.info?.wid?.user ?? 'your account';
       process.stderr.write(`\nLinked as ${bold(String(me))}.\n`);
-      process.stderr.write(dim('Next: run `wassap sync` to pull your chats.\n'));
+      process.stderr.write(dim(`Next: run \`${command('sync', CMD)}\` to pull your chats.\n`));
     },
     { onStatus }
   );
@@ -268,9 +273,9 @@ function cmdStatus() {
   const lastSync = getMeta(db, 'last_sync');
   const linked = fs.existsSync(sessionDir());
 
-  process.stdout.write(`${bold('wassap status')}\n`);
+  process.stdout.write(`${bold(command('status', CMD))}\n`);
   process.stdout.write(`  data directory  ${dataDir()}\n`);
-  process.stdout.write(`  linked session  ${linked ? cyan('yes') : dim('no - run `wassap login`')}\n`);
+  process.stdout.write(`  linked session  ${linked ? cyan('yes') : dim(`no - run \`${command('login', CMD)}\``)}\n`);
   process.stdout.write(`  account         ${account ?? dim('unknown')}\n`);
   process.stdout.write(
     `  last sync       ${lastSync ? `${new Date(Number(lastSync)).toLocaleString()} ` + dim(`(${humanizeDuration(Date.now() - Number(lastSync))} ago)`) : dim('never')}\n`
@@ -279,7 +284,7 @@ function cmdStatus() {
   if (getMeta(db, 'demo') === '1') {
     process.stdout.write(
       `  ${yellow('note')}            this is demo data from scripts/seed-demo.js; ` +
-        'run `wassap reset --yes` before syncing your real account\n'
+        `run \`${command('reset --yes', CMD)}\` before syncing your real account\n`
     );
   }
 }
@@ -289,7 +294,7 @@ function cmdReset(values) {
 
   if (!values.yes) {
     process.stdout.write(
-      `${bold('wassap reset')} would delete:\n` +
+      `${bold(command('reset', CMD))} would delete:\n` +
         `  ${store.file}\n` +
         (store.exists
           ? `    ${store.chats} chats, ${store.messages} messages` +
@@ -321,7 +326,7 @@ async function main() {
   try {
     ({ values } = parseArgs({ args: argv, options: OPTIONS, allowPositionals: false }));
   } catch (err) {
-    fail(`${err.message}\n\nRun \`wassap help\` for available options.`);
+    fail(`${err.message}\n\nRun \`${command('help', CMD)}\` for available options.`);
   }
 
   if (command === 'help' || values.help) {
@@ -369,11 +374,11 @@ function explain(err) {
   if (/Execution context was destroyed|Session closed|Target closed|Protocol error/i.test(text)) {
     return (
       'The browser session ended unexpectedly. This usually means WhatsApp logged the\n' +
-      'device out. Run `wassap logout` and then `wassap login` to link again.'
+      `device out. Run \`${command('logout', CMD)}\` and then \`${command('login', CMD)}\` to link again.`
     );
   }
   if (/authentication failed/i.test(text)) {
-    return 'WhatsApp rejected the stored session. Run `wassap logout`, then `wassap login`.';
+    return `WhatsApp rejected the stored session. Run \`${command('logout', CMD)}\`, then \`${command('login', CMD)}\`.`;
   }
   return null;
 }

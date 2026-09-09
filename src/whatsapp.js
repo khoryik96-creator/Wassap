@@ -1,5 +1,12 @@
 import path from 'node:path';
 import { sessionDir, resolveBrowserPath, dataDir } from './config.js';
+import { UserError } from './errors.js';
+import {
+  installProtocolErrorGuard,
+  beginSession,
+  endSession,
+  isProtocolNoise,
+} from './protocol-guard.js';
 
 /**
  * whatsapp-web.js drives a real WhatsApp Web session in headless Chromium.
@@ -22,8 +29,21 @@ export async function createClient() {
   const { Client, LocalAuth } = await loadLibrary();
   const executablePath = await resolveBrowserPath();
 
+  // WhatsApp Web occasionally ships changes that break whatsapp-web.js. Pinning
+  // a known-good page version is the usual mitigation, so allow one to be named.
+  const pinned = process.env.WASSAP_WEB_VERSION;
+  const webVersionCache = pinned
+    ? {
+        type: 'remote',
+        remotePath:
+          'https://raw.githubusercontent.com/wppconnect-team/wa-version/main/html/' +
+          `${pinned}.html`,
+      }
+    : undefined;
+
   return new Client({
     authStrategy: new LocalAuth({ dataPath: sessionDir() }),
+    ...(webVersionCache ? { webVersionCache } : {}),
     puppeteer: {
       headless: true,
       executablePath,
@@ -109,16 +129,38 @@ export async function withClient(fn, { onStatus = () => {} } = {}) {
     client.once('auth_failure', (m) => reject(new Error(`WhatsApp authentication failed: ${m}`)));
   });
 
+  installProtocolErrorGuard();
+  beginSession();
+
   try {
     await client.initialize();
     await ready;
     onStatus('Connected.');
     return await fn(client);
+  } catch (err) {
+    // A protocol error that reaches us means the browser died mid-session,
+    // which is worth explaining rather than dumping a puppeteer stack.
+    if (isProtocolNoise(err)) {
+      throw new UserError(
+        'The browser closed unexpectedly while talking to WhatsApp Web.\n\n' +
+          'This usually means the browser build does not match what\n' +
+          'whatsapp-web.js expects. The most reliable fix is to let Puppeteer\n' +
+          'use its own Chromium:\n' +
+          '  npm install-scripts approve puppeteer\n' +
+          '  npm install\n\n' +
+          'If that is already the case, WhatsApp Web may have changed under the\n' +
+          'library. Pin a known-good version and retry:\n' +
+          '  set WASSAP_WEB_VERSION=2.3000.1027183017\n\n' +
+          `Re-run with WASSAP_DEBUG=1 for the underlying error.`
+      );
+    }
+    throw err;
   } finally {
     try {
       await client.destroy();
     } catch {
       /* the browser may already be gone; nothing useful to do */
     }
+    endSession();
   }
 }

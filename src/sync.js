@@ -2,6 +2,7 @@ import { upsertChat, upsertMessages, setMeta, getMeta, counts } from './db.js';
 import { withClient } from './whatsapp.js';
 import { isExcludedChatId } from './analyze.js';
 import { UserError } from './errors.js';
+import { command } from './invocation.js';
 
 /** whatsapp-web.js reports seconds; the database stores milliseconds. */
 const toMs = (seconds) => (seconds ? Number(seconds) * 1000 : 0);
@@ -64,7 +65,7 @@ export async function sync(db, { limit = 50, includeGroups = true, onStatus = ()
   if (getMeta(db, 'demo') === '1') {
     throw new UserError(
       'This database holds demo data from scripts/seed-demo.js.\n' +
-        'Clear it before syncing your real account:  wassap reset --yes'
+        `Clear it before syncing your real account:  ${command('reset --yes')}`
     );
   }
 
