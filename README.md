@@ -58,6 +58,18 @@ npm install
 set PUPPETEER_EXECUTABLE_PATH=C:\Program Files\Google\Chrome\Application\chrome.exe
 ```
 
+### If the QR code will not link
+
+WhatsApp rotates the QR roughly every 20 seconds and only the newest one is
+valid, so `login` redraws it each time. Scan the code at the **bottom** of your
+terminal, not one that has scrolled up — scanning an expired code is what
+produces "couldn't link device" on the phone.
+
+Each code is also written to `~/.wassap/qr.png` (`C:\Users\<you>\.wassap\qr.png`
+on Windows). If your terminal font makes the code hard for the camera to read,
+open that image instead and scan it from the screen. It is rewritten on every
+refresh, so reopen it after each redraw.
+
 ### About the npm audit warnings
 
 `npm install` reports 5 high-severity advisories. They are one issue counted
