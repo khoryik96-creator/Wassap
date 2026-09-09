@@ -5,6 +5,8 @@ import os from 'node:os';
 import path from 'node:path';
 import { openDb, upsertChat, upsertMessages, setMeta, getMeta, counts } from '../src/db.js';
 import { review, buildThreads } from '../src/review.js';
+import { sync } from '../src/sync.js';
+import { UserError } from '../src/errors.js';
 
 const NOW = Date.parse('2026-09-09T12:00:00Z');
 const DAY = 86400000;
@@ -147,4 +149,28 @@ test('meta round-trips sync bookkeeping', (t) => {
   setMeta(db, 'account', '44770@c.us');
   setMeta(db, 'account', '44771@c.us');
   assert.equal(getMeta(db, 'account'), '44771@c.us');
+});
+
+test('sync refuses to touch a database seeded with demo data', async (t) => {
+  const { db, dir } = tempDb();
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+
+  setMeta(db, 'demo', '1');
+  await assert.rejects(() => sync(db), (err) => {
+    assert.ok(err instanceof UserError, 'the refusal is a user-facing error');
+    assert.match(err.message, /demo data/);
+    assert.match(err.message, /wassap reset --yes/);
+    return true;
+  });
+});
+
+test('a database without the demo marker is not blocked by that guard', async (t) => {
+  const { db, dir } = tempDb();
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+
+  // No demo marker, so sync gets past the guard and fails later, on the browser.
+  await assert.rejects(() => sync(db), (err) => {
+    assert.ok(!(err instanceof UserError), 'not the demo refusal');
+    return true;
+  });
 });

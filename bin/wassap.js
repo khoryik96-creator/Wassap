@@ -4,14 +4,14 @@ import { parseArgs } from 'node:util';
 import fs from 'node:fs';
 import path from 'node:path';
 import { openDb, getMeta, counts } from '../src/db.js';
-import { dataDir, sessionDir } from '../src/config.js';
+import { dataDir, sessionDir, dbPath } from '../src/config.js';
 import { review } from '../src/review.js';
 import { resolveInstant, parseDuration, humanizeDuration } from '../src/duration.js';
 import { renderTable, renderSummary } from '../src/report/table.js';
 import { toJson, toCsv } from '../src/report/data.js';
 import { renderHtml } from '../src/report/html.js';
 import { SORT_KEYS } from '../src/filters.js';
-import { bold, dim, cyan } from '../src/report/style.js';
+import { bold, dim, cyan, yellow } from '../src/report/style.js';
 
 const HELP = `
 ${bold('wassap')} - review WhatsApp conversations that went unanswered.
@@ -24,6 +24,7 @@ ${bold('COMMANDS')}
   sync                  Pull chats and recent messages into the local database.
   review                Report unanswered conversations (default command).
   status                Show what is stored locally and when it was last synced.
+  reset                 Delete the local message database (needs --yes).
   logout                Unlink the device and delete the stored session.
 
 ${bold('REVIEW FILTERS')}
@@ -53,6 +54,10 @@ ${bold('OUTPUT')}
   --csv                         Write CSV (stdout unless --out is given).
   --html                        Write an interactive HTML dashboard (report.html).
   --out <path>                  Destination file for the chosen format.
+
+${bold('RESET OPTIONS')}
+  --yes                         Confirm the deletion. Without it, reset only reports.
+  --all                         Also remove the linked session, as logout does.
 
 ${bold('SYNC OPTIONS')}
   --messages <n>                Messages to fetch per chat. (50)
@@ -92,6 +97,8 @@ const OPTIONS = {
   out: { type: 'string' },
   messages: { type: 'string' },
   'no-groups': { type: 'boolean' },
+  yes: { type: 'boolean' },
+  all: { type: 'boolean' },
 };
 
 function fail(message) {
@@ -268,6 +275,43 @@ function cmdStatus() {
     `  last sync       ${lastSync ? `${new Date(Number(lastSync)).toLocaleString()} ` + dim(`(${humanizeDuration(Date.now() - Number(lastSync))} ago)`) : dim('never')}\n`
   );
   process.stdout.write(`  stored          ${totals.chats} chats, ${totals.messages} messages\n`);
+  if (getMeta(db, 'demo') === '1') {
+    process.stdout.write(
+      `  ${yellow('note')}            this is demo data from scripts/seed-demo.js; ` +
+        'run `wassap reset --yes` before syncing your real account\n'
+    );
+  }
+}
+
+function cmdReset(values) {
+  const file = dbPath();
+  const session = sessionDir();
+  const db = openDb();
+  const totals = counts(db);
+  const isDemo = getMeta(db, 'demo') === '1';
+
+  if (!values.yes) {
+    process.stdout.write(
+      `${bold('wassap reset')} would delete:\n` +
+        `  ${file}\n` +
+        `    ${totals.chats} chats, ${totals.messages} messages` +
+        `${isDemo ? dim(' (demo data)') : ''}\n` +
+        (values.all ? `  ${session}\n    the linked device session\n` : '') +
+        `\nRe-run with --yes to confirm.\n`
+    );
+    return;
+  }
+
+  for (const suffix of ['', '-wal', '-shm']) {
+    fs.rmSync(`${file}${suffix}`, { force: true });
+  }
+  process.stdout.write(`Deleted ${file}\n`);
+
+  if (values.all) {
+    fs.rmSync(session, { recursive: true, force: true });
+    process.stdout.write(`Deleted ${session}\n`);
+    process.stdout.write(dim('Also unlink "wassap" under WhatsApp > Linked devices.\n'));
+  }
 }
 
 function cmdLogout() {
@@ -282,7 +326,7 @@ function cmdLogout() {
 
 async function main() {
   const argv = process.argv.slice(2);
-  const commands = new Set(['login', 'sync', 'review', 'status', 'logout', 'help']);
+  const commands = new Set(['login', 'sync', 'review', 'status', 'reset', 'logout', 'help']);
   const command = commands.has(argv[0]) ? argv.shift() : 'review';
 
   let values;
@@ -304,6 +348,8 @@ async function main() {
       return cmdSync(values);
     case 'status':
       return cmdStatus();
+    case 'reset':
+      return cmdReset(values);
     case 'logout':
       return cmdLogout();
     default:
@@ -345,6 +391,12 @@ function explain(err) {
 }
 
 main().catch((err) => {
+  // Errors we raised ourselves already say the right thing.
+  if (err?.userFacing) {
+    process.stderr.write(`\n${err.message}\n`);
+    process.exit(1);
+  }
+
   const hint = explain(err);
   if (hint && !process.env.WASSAP_DEBUG) {
     process.stderr.write(`\n${hint}\n`);

@@ -86,6 +86,14 @@ This fills a throwaway database with synthetic conversations so you can see the
 output and the dashboard before deciding to link anything. Unset the variable
 again (`set WASSAP_HOME=`) before working with your real account.
 
+If you forget to set `WASSAP_HOME` first, the demo data lands in your real
+store instead. Nothing is lost and nothing silently mixes: `status` flags the
+database as demo data and `sync` refuses to run against it. Clear it with:
+
+```bash
+wassap reset --yes
+```
+
 ## What counts as unanswered
 
 A conversation is unanswered when nobody has replied to the most recent message
@@ -118,6 +126,7 @@ messages, so they cannot make a dead thread look answered.
 | `sync` | Pull chats and recent messages into the local database |
 | `review` | Report unanswered conversations (the default command) |
 | `status` | Show what is stored and when it was last synced |
+| `reset` | Delete the local message database (needs `--yes`) |
 | `logout` | Unlink and delete the stored session |
 
 ## Filters
