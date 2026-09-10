@@ -337,6 +337,20 @@ async function cmdUi(values) {
   return new Promise(() => {});
 }
 
+function cmdLogout() {
+  const session = sessionDir();
+  if (!fs.existsSync(session)) {
+    process.stdout.write('No stored session to remove.\n');
+    return;
+  }
+  fs.rmSync(session, { recursive: true, force: true });
+  process.stdout.write(`Deleted ${session}\n`);
+  process.stdout.write(dim('Also unlink "wassap" under WhatsApp > Linked devices.\n'));
+  process.stdout.write(
+    dim(`Your messages are kept. Use \`${command('reset --yes', CMD)}\` to remove those too.\n`)
+  );
+}
+
 async function cmdWebVersions(values) {
   const { fetchVersions } = await import('../src/webversion.js');
   const versions = await fetchVersions();
@@ -398,7 +412,7 @@ async function main() {
   const commands = new Set([
     'login', 'sync', 'review', 'status', 'reset', 'ui', 'web-versions', 'logout', 'help',
   ]);
-  const command = commands.has(argv[0]) ? argv.shift() : 'review';
+  const subcommand = commands.has(argv[0]) ? argv.shift() : 'review';
 
   let values;
   try {
@@ -407,12 +421,12 @@ async function main() {
     fail(`${err.message}\n\nRun \`${command('help', CMD)}\` for available options.`);
   }
 
-  if (command === 'help' || values.help) {
+  if (subcommand === 'help' || values.help) {
     process.stdout.write(`${HELP}\n`);
     return;
   }
 
-  switch (command) {
+  switch (subcommand) {
     case 'login':
       return cmdLogin(values);
     case 'sync':

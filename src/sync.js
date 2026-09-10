@@ -10,7 +10,7 @@ import { loadBackend } from './backends/index.js';
  * Backends differ in how they reach WhatsApp but hand back the same rows, so
  * everything below this point is shared.
  */
-export async function sync(db, { limit = 50, includeGroups = true, backend, onStatus = () => {}, onQr = null } = {}) {
+export async function sync(db, { limit = 50, includeGroups = true, backend, onStatus = () => {}, onQr = undefined } = {}) {
   if (getMeta(db, 'demo') === '1') {
     throw new UserError(
       'This database holds demo data from scripts/seed-demo.js.\n' +

@@ -1,7 +1,7 @@
 import http from 'node:http';
 import fs from 'node:fs';
 import path from 'node:path';
-import { openDb, setThreadState, threadState, messagesForChat, getMeta, counts, THREAD_STATUSES } from './db.js';
+import { openDb, setThreadState, threadState, messagesForChat, getMeta, setMeta, counts, THREAD_STATUSES } from './db.js';
 import { review } from './review.js';
 import { previewBody } from './analyze.js';
 import { renderApp } from './report/app.js';
@@ -16,8 +16,54 @@ import { writeQrImage } from './qr.js';
 
 const JSON_HEADERS = { 'content-type': 'application/json; charset=utf-8' };
 
+/**
+ * Loopback binding keeps other machines out, but not other pages in the
+ * browser the user is already running: a POST with no custom headers is a
+ * CORS "simple request" and fires without a preflight. So state-changing
+ * routes must come from our own origin, and the Host header must be one we
+ * served (which also blocks DNS rebinding).
+ */
+/**
+ * Whether a device is actually linked. useMultiFileAuthState creates its
+ * directory on the first attempt, so the directory existing proves nothing;
+ * creds.json is only written once WhatsApp has answered.
+ */
+function hasLinkedSession() {
+  const candidates = [
+    path.join(sessionDir(), 'baileys', 'creds.json'),
+    path.join(sessionDir(), 'session'), // whatsapp-web.js LocalAuth
+  ];
+  return candidates.some((file) => {
+    try {
+      return fs.existsSync(file);
+    } catch {
+      return false;
+    }
+  });
+}
+
+export function isSameOrigin(req, port) {
+  const allowedHosts = new Set([
+    `127.0.0.1:${port}`,
+    `localhost:${port}`,
+    `[::1]:${port}`,
+  ]);
+
+  const host = req.headers.host;
+  if (!host || !allowedHosts.has(host)) return false;
+
+  const origin = req.headers.origin;
+  if (origin === undefined) return true; // same-origin fetch may omit it
+  try {
+    return allowedHosts.has(new URL(origin).host);
+  } catch {
+    return false;
+  }
+}
+
 function send(res, status, body, headers = {}) {
-  const payload = typeof body === 'string' ? body : JSON.stringify(body);
+  // Buffers are already the bytes to send; stringifying one yields JSON.
+  const payload = typeof body === 'string' || Buffer.isBuffer(body) ? body : JSON.stringify(body);
   res.writeHead(status, {
     'cache-control': 'no-store',
     'x-content-type-options': 'nosniff',
@@ -91,9 +137,10 @@ export function threadDetail(db, chatId) {
  * time, so the server runs at most one job and streams its progress to any
  * page that is watching.
  */
-function createJobRunner(db) {
+export function createJobRunner() {
   const watchers = new Set();
-  let current = null; // { kind, startedAt, log, qrAt, finished, error }
+  let current = null; // { kind, log, qrAt, finished, error }
+  let generation = 0; // bumped per job, so a replay can be told apart from live lines
 
   const broadcast = (event) => {
     const line = `data: ${JSON.stringify(event)}\n\n`;
@@ -106,24 +153,26 @@ function createJobRunner(db) {
     }
   };
 
-  const status = (message) => {
-    if (current) current.log.push(message);
-    broadcast({ type: 'status', message });
-  };
-
   return {
     watch(res) {
       watchers.add(res);
       res.on('close', () => watchers.delete(res));
+
+      // A reconnecting EventSource must be able to tell a replay from new
+      // output, or it appends the whole log again on every reconnect.
       if (current) {
-        for (const message of current.log) res.write(`data: ${JSON.stringify({ type: 'status', message })}\n\n`);
-        if (current.qrAt) res.write(`data: ${JSON.stringify({ type: 'qr', at: current.qrAt })}\n\n`);
+        res.write(`data: ${JSON.stringify({ type: 'replay', kind: current.kind, generation, log: current.log, qrAt: current.qrAt, running: !current.finished, error: current.error })}\n\n`);
       }
     },
 
     snapshot() {
       return current
-        ? { kind: current.kind, running: !current.finished, error: current.error ?? null, log: current.log.slice(-40) }
+        ? {
+            kind: current.kind,
+            running: !current.finished,
+            error: current.error ?? null,
+            log: current.log.slice(-40),
+          }
         : null;
     },
 
@@ -131,36 +180,67 @@ function createJobRunner(db) {
       return Boolean(current && !current.finished);
     },
 
-    async start(kind, run) {
-      if (this.busy()) throw new Error(`A ${current.kind} is already running.`);
-      current = { kind, startedAt: Date.now(), log: [], qrAt: null, finished: false, error: null };
-      broadcast({ type: 'started', kind });
+    /**
+     * Begin a job. Returns false if one is already running; the check and the
+     * assignment happen together so two requests cannot both get through.
+     */
+    start(kind, run) {
+      if (current && !current.finished) return false;
 
-      const onQr = async (qr) => {
-        await writeQrImage(qr, path.join(dataDir(), 'qr.png'));
-        current.qrAt = Date.now();
-        status('Scan the QR code below with WhatsApp: Settings > Linked devices > Link a device.');
-        broadcast({ type: 'qr', at: current.qrAt });
+      generation += 1;
+      // Callbacks write to *this* job, not to whatever is current later on:
+      // a backend can emit a late event while the next job is already running.
+      const job = { kind, log: [], qrAt: null, finished: false, error: null };
+      const mine = generation;
+      current = job;
+
+      const status = (message) => {
+        job.log.push(message);
+        if (current === job) broadcast({ type: 'status', generation: mine, message });
       };
 
-      try {
-        const result = await run({ onStatus: status, onQr });
-        current.finished = true;
-        broadcast({ type: 'done', kind, result: result ?? null });
-      } catch (err) {
-        current.finished = true;
-        current.error = err.message;
-        broadcast({ type: 'error', kind, message: err.message });
-      }
+      const onQr = async (qr, attempt = 1) => {
+        const file = await writeQrImage(qr, path.join(dataDir(), 'qr.png'));
+        if (!file) {
+          // Without an image the page would show a stale QR from a past run.
+          status('Could not render the QR code as an image. Use the terminal instead.');
+          return;
+        }
+        job.qrAt = Date.now();
+        status(
+          attempt > 1
+            ? `QR code refreshed (#${attempt}) - the previous one has expired, scan this one.`
+            : 'Scan this QR code with WhatsApp: Settings > Linked devices > Link a device.'
+        );
+        if (current === job) broadcast({ type: 'qr', generation: mine, at: job.qrAt });
+      };
+
+      broadcast({ type: 'started', kind, generation: mine });
+
+      // Deliberately not awaited: the request returns immediately. Every
+      // outcome is captured, so this can never reject unhandled.
+      Promise.resolve()
+        .then(() => run({ onStatus: status, onQr }))
+        .then((result) => {
+          job.finished = true;
+          broadcast({ type: 'done', kind, generation: mine, result: result ?? null });
+        })
+        .catch((err) => {
+          job.finished = true;
+          job.error = err?.message ?? String(err);
+          broadcast({ type: 'error', kind, generation: mine, message: job.error });
+        });
+
+      return true;
     },
   };
 }
 
 export function createServer({ dbFile } = {}) {
   const db = openDb(dbFile);
-  const jobs = createJobRunner(db);
+  const jobs = createJobRunner();
 
-  return http.createServer(async (req, res) => {
+  const server = http.createServer(async (req, res) => {
     let url;
     try {
       url = new URL(req.url, 'http://localhost');
@@ -168,6 +248,16 @@ export function createServer({ dbFile } = {}) {
       return send(res, 400, { error: 'Bad request URL.' }, JSON_HEADERS);
     }
     const { pathname } = url;
+
+    // Anything that starts a job or writes state must come from our own page.
+    if (req.method !== 'GET' && req.method !== 'HEAD') {
+      const port = server.address()?.port;
+      if (!isSameOrigin(req, port)) {
+        return send(res, 403, {
+          error: 'Refused: this request did not come from the wassap dashboard.',
+        }, JSON_HEADERS);
+      }
+    }
 
     try {
       if (req.method === 'GET' && (pathname === '/' || pathname === '/index.html')) {
@@ -182,7 +272,7 @@ export function createServer({ dbFile } = {}) {
       if (req.method === 'GET' && pathname === '/api/state') {
         const totals = counts(db);
         return send(res, 200, {
-          linked: fs.existsSync(path.join(sessionDir(), 'baileys')) || fs.existsSync(sessionDir()),
+          linked: hasLinkedSession(),
           account: getMeta(db, 'account'),
           backend: getMeta(db, 'backend'),
           lastSync: Number(getMeta(db, 'last_sync')) || null,
@@ -212,22 +302,25 @@ export function createServer({ dbFile } = {}) {
       }
 
       if (req.method === 'POST' && pathname === '/api/login') {
-        if (jobs.busy()) return send(res, 409, { error: 'Something is already running.' }, JSON_HEADERS);
         const { loadBackend } = await import('./backends/index.js');
-        jobs.start('login', async ({ onStatus, onQr }) => {
+        const startedLogin = jobs.start('login', async ({ onStatus, onQr }) => {
           const { name, login } = await loadBackend();
           onStatus(`Linking via ${name}...`);
           const who = await login({ onStatus, onQr });
+          // Record it here: sync used to be the only writer, so the page had
+          // no way to tell that linking had succeeded.
+          if (who?.account) setMeta(db, 'account', who.account);
+          setMeta(db, 'backend', name);
           onStatus(`Linked as ${who.name ?? who.account ?? 'your account'}.`);
           return who;
         });
+        if (!startedLogin) return send(res, 409, { error: 'Something is already running.' }, JSON_HEADERS);
         return send(res, 202, { started: 'login' }, JSON_HEADERS);
       }
 
       if (req.method === 'POST' && pathname === '/api/sync') {
-        if (jobs.busy()) return send(res, 409, { error: 'Something is already running.' }, JSON_HEADERS);
         const { sync } = await import('./sync.js');
-        jobs.start('sync', async ({ onStatus, onQr }) => {
+        const startedSync = jobs.start('sync', async ({ onStatus, onQr }) => {
           const result = await sync(db, { onStatus, onQr });
           onStatus(
             `Synced ${result.chats} chats and ${result.messages} messages. ` +
@@ -235,6 +328,7 @@ export function createServer({ dbFile } = {}) {
           );
           return result;
         });
+        if (!startedSync) return send(res, 409, { error: 'Something is already running.' }, JSON_HEADERS);
         return send(res, 202, { started: 'sync' }, JSON_HEADERS);
       }
 
@@ -278,6 +372,8 @@ export function createServer({ dbFile } = {}) {
       return send(res, 500, { error: err.message }, JSON_HEADERS);
     }
   });
+
+  return server;
 }
 
 /** Start on loopback only. Resolves once listening. */

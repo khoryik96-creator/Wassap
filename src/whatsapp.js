@@ -64,17 +64,20 @@ export async function createClient({ onStatus = () => {} } = {}) {
  *
  * `onStatus` receives short progress strings so callers control the output.
  */
-export async function withClient(fn, { onStatus = () => {}, onQr = null } = {}) {
+export async function withClient(fn, { onStatus = () => {}, onQr = showQr } = {}) {
   const client = await createClient({ onStatus });
   let attempt = 0;
   let toldAboutImage = false;
 
-  // WhatsApp rotates the QR roughly every 20 seconds. Each rotation emits a new
-  // event, and only the newest code will link - so every one of them is drawn.
+  // WhatsApp rotates the QR roughly every 20 seconds and only the newest one
+  // links, so every rotation is presented.
+  const terminal = onQr === showQr;
   client.on('qr', async (qr) => {
     attempt += 1;
-    const image = onQr ? (await onQr(qr, attempt), null) : await showQr(qr, attempt, onStatus);
+    const image = await onQr(qr, attempt, onStatus);
 
+    // Terminal-only guidance: a browser showing the image needs none of it.
+    if (!terminal) return;
     if (attempt === 1) {
       onStatus('This code expires about every 20 seconds and will redraw itself.');
       onStatus('Always scan the most recent one, at the bottom of your screen.');

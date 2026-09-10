@@ -22,7 +22,7 @@ async function contactFacts(chat) {
 }
 
 /** Pull chats and their recent messages by driving WhatsApp Web in a browser. */
-export async function harvest({ limit = 50, includeGroups = true, onStatus = () => {}, onQr = null } = {}) {
+export async function harvest({ limit = 50, includeGroups = true, onStatus = () => {}, onQr = undefined } = {}) {
   return withClient(
     async (client) => {
       const account = client.info?.wid?._serialized ?? null;
@@ -77,7 +77,7 @@ export async function harvest({ limit = 50, includeGroups = true, onStatus = () 
   );
 }
 
-export async function login({ onStatus = () => {}, onQr = null } = {}) {
+export async function login({ onStatus = () => {}, onQr = undefined } = {}) {
   return withClient(
     async (client) => ({
       account: client.info?.wid?._serialized ?? null,

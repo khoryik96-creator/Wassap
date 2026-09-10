@@ -224,24 +224,29 @@ function fitMain() {
   document.documentElement.style.setProperty('--chrome', chrome + 'px');
 }
 
-function when(ms) {
-  if (!ms) return 'never';
-  const days = Math.floor((Date.now() - ms) / DAY);
-  if (days > 0) return days + 'd ago';
-  return new Date(ms).toLocaleTimeString();
-}
-
 async function refreshState() {
   const s = await (await fetch('/api/state')).json();
-  const bits = [];
-  bits.push(s.account ? 'Linked: ' + s.account.split(':')[0].split('@')[0] : 'Not linked yet');
-  bits.push('last sync ' + when(s.lastSync));
-  bits.push(s.chats + ' chats, ' + s.messages + ' messages');
-  if (s.isDemo) bits.push('DEMO DATA');
-  $('state').textContent = bits.join('  ' + String.fromCharCode(183) + '  ');
-  $('link').disabled = Boolean(s.job && s.job.running);
-  $('syncnow').disabled = Boolean(s.job && s.job.running);
+
+  // The linked flag reflects stored credentials; the account only appears once
+  // a link or sync has reported one, so fall back to the weaker signal.
+  const who = s.account
+    ? 'Linked: ' + s.account.split(':')[0].split('@')[0]
+    : s.linked ? 'Linked' : 'Not linked yet';
+
+  $('state').textContent = meta([
+    who,
+    'last sync ' + (s.lastSync ? humanize(Date.now() - s.lastSync) + ' ago' : 'never'),
+    s.chats + ' chats, ' + s.messages + ' messages',
+    s.isDemo ? 'DEMO DATA' : null,
+  ]);
+
+  setBusy(Boolean(s.job && s.job.running));
   fitMain();
+}
+
+function setBusy(busy) {
+  $('link').disabled = busy;
+  $('syncnow').disabled = busy;
 }
 
 function logLine(text, isError) {
@@ -257,16 +262,39 @@ function showJob(on) {
   fitMain();
 }
 
+function hideQr() {
+  $('qr').classList.remove('on');
+  $('qr').removeAttribute('src');
+}
+
 function connectEvents() {
   const source = new EventSource('/api/events');
+
   source.onmessage = (event) => {
     const data = JSON.parse(event.data);
+
+    if (data.type === 'replay') {
+      // A reconnecting EventSource is re-sent the log so far. Rebuild from it
+      // rather than appending, or every reconnect duplicates the whole log.
+      $('joblog').textContent = '';
+      for (const message of data.log) logLine(message);
+      if (data.error) logLine(data.error, true);
+      if (data.qrAt && data.running) {
+        $('qr').src = '/api/qr.png?at=' + data.qrAt;
+        $('qr').classList.add('on');
+      } else {
+        hideQr();
+      }
+      setBusy(data.running);
+      showJob(true);
+      return;
+    }
+
     if (data.type === 'started') {
       $('joblog').textContent = '';
-      $('qr').classList.remove('on');
+      hideQr();
       showJob(true);
-      $('link').disabled = true;
-      $('syncnow').disabled = true;
+      setBusy(true);
     } else if (data.type === 'status') {
       logLine(data.message);
       showJob(true);
@@ -277,11 +305,15 @@ function connectEvents() {
       fitMain();
     } else if (data.type === 'done') {
       logLine('Finished.');
-      $('qr').classList.remove('on');
+      hideQr();
+      setBusy(false);
       refreshState();
       load();
     } else if (data.type === 'error') {
       logLine(data.message, true);
+      // A failed link must not leave an expired QR on screen to be scanned.
+      hideQr();
+      setBusy(false);
       refreshState();
     }
   };
@@ -289,7 +321,11 @@ function connectEvents() {
 
 async function startJob(what) {
   const res = await fetch('/api/' + what, { method: 'POST' });
-  if (res.status === 409) logLine('Something is already running.', true);
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({}));
+    showJob(true);
+    logLine(body.error || ('Could not start ' + what + ' (HTTP ' + res.status + ').'), true);
+  }
 }
 
 for (const id of ['q','direction','saved','chatType','statuses','sort','minwait']) {

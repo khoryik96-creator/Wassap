@@ -45,7 +45,7 @@ async function loadBaileys() {
 export async function harvest({
   includeGroups = true,
   onStatus = () => {},
-  onQr = null,
+  onQr = showQr,
   quietMs = DEFAULT_QUIET_MS,
   maxMs = DEFAULT_MAX_MS,
 } = {}) {
@@ -139,10 +139,7 @@ export async function harvest({
       socket.ev.on('connection.update', async (update) => {
         const { connection, lastDisconnect, qr } = update;
 
-        if (qr) {
-          if (onQr) await onQr(qr, attempt);
-          else await showQr(qr, attempt === 1 ? 1 : attempt, onStatus);
-        }
+        if (qr) await onQr(qr, attempt, onStatus);
 
         if (connection === 'open') {
           account = socket.user?.id ?? null;
@@ -236,7 +233,7 @@ export async function harvest({
 }
 
 /** Link the device. Same connection dance, but stops as soon as it is open. */
-export async function login({ onStatus = () => {}, onQr = null } = {}) {
+export async function login({ onStatus = () => {}, onQr = showQr } = {}) {
   const baileys = await loadBaileys();
   const makeWASocket = baileys.default ?? baileys.makeWASocket;
   const { useMultiFileAuthState, DisconnectReason, fetchLatestBaileysVersion } = baileys;
@@ -262,10 +259,7 @@ export async function login({ onStatus = () => {}, onQr = null } = {}) {
 
       socket.ev.on('creds.update', saveCreds);
       socket.ev.on('connection.update', async ({ connection, lastDisconnect, qr }) => {
-        if (qr) {
-          if (onQr) await onQr(qr, attempt);
-          else await showQr(qr, attempt === 1 ? 1 : attempt, onStatus);
-        }
+        if (qr) await onQr(qr, attempt, onStatus);
 
         if (connection === 'open') {
           if (settled) return;
